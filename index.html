@@ -60,18 +60,42 @@
 </nav>
 
 <footer class="help">
-  <dl class="help__list">
-    <div><dt>←&nbsp;→</dt><dd>이동</dd></div>
-    <div><dt>↓</dt><dd>소프트 드롭</dd></div>
-    <div><dt>Space</dt><dd>하드 드롭</dd></div>
-    <div><dt>↑&nbsp;/&nbsp;X</dt><dd>시계 회전</dd></div>
-    <div><dt>Z&nbsp;/&nbsp;Ctrl</dt><dd>반시계 회전</dd></div>
-    <div><dt>A</dt><dd>180° 회전</dd></div>
-    <div><dt>C&nbsp;/&nbsp;Shift</dt><dd>홀드</dd></div>
-    <div><dt>P&nbsp;/&nbsp;Esc</dt><dd>일시정지</dd></div>
-    <div><dt>R</dt><dd>다시 시작</dd></div>
-  </dl>
+  <dl class="help__list" id="help-list"></dl>
 </footer>
+
+<button class="settings-open" id="settings-open" type="button" aria-label="설정 열기">
+  <span aria-hidden="true">⚙</span>
+</button>
+
+<div class="modal" id="settings" hidden>
+  <div class="modal__sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <header class="modal__head">
+      <h2 class="modal__title" id="settings-title">설정</h2>
+      <button class="modal__close" id="settings-close" type="button" aria-label="닫기">✕</button>
+    </header>
+
+    <div class="modal__body">
+      <section class="modal__section">
+        <h3 class="modal__subtitle">조작키</h3>
+        <p class="modal__lead">키를 클릭한 뒤 원하는 키를 누르세요. 동작 하나에 최대 3개까지 지정할 수 있습니다.</p>
+        <div class="keymap" id="keymap"></div>
+      </section>
+
+      <section class="modal__section">
+        <h3 class="modal__subtitle">반응 속도</h3>
+        <div class="sliders" id="sliders"></div>
+      </section>
+    </div>
+
+    <footer class="modal__foot">
+      <p class="modal__note" id="settings-note" hidden></p>
+      <div class="modal__actions">
+        <button class="btn btn--ghost" id="settings-reset" type="button">기본값으로</button>
+        <button class="btn" id="settings-done" type="button">완료</button>
+      </div>
+    </footer>
+  </div>
+</div>
 
 <script type="module" src="js/main.js"></script>
 </body>

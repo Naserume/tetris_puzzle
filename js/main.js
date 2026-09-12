@@ -1,11 +1,14 @@
-// Wires the engine, renderer and input together and owns the animation loop.
+// Wires the engine, renderer, input and settings together and owns the loop.
 
 import { Game } from './engine.js';
 import { Renderer } from './render.js';
 import { Input } from './input.js';
+import { ACTIONS, loadSettings, saveSettings, keyLabel } from './settings.js';
+import { SettingsPanel } from './settings-ui.js';
 
 const $ = (id) => document.getElementById(id);
 
+const settings = loadSettings();
 const game = new Game();
 const renderer = new Renderer($('board'), $('hold-canvas'), $('next-canvas'));
 
@@ -18,6 +21,7 @@ const ui = {
   overlayText: $('overlay-text'),
   overlayHint: $('overlay-hint'),
   toast: $('toast'),
+  helpList: $('help-list'),
 };
 
 function formatScore(n) {
@@ -30,6 +34,15 @@ function syncStats() {
   ui.level.textContent = game.level;
 }
 
+// "←" or "P / Esc" — whatever the action is bound to right now, or null if the
+// player has unbound it entirely.
+function keyHint(actionId) {
+  const codes = settings.bindings[actionId] || [];
+  return codes.length ? codes.map(keyLabel).join(' / ') : null;
+}
+
+/* ---------- overlay ---------- */
+
 function showOverlay(title, text, hint) {
   ui.overlayTitle.textContent = title;
   ui.overlayText.textContent = text;
@@ -37,9 +50,42 @@ function showOverlay(title, text, hint) {
   ui.overlay.hidden = false;
 }
 
-function hideOverlay() {
-  ui.overlay.hidden = true;
+// The overlay is a pure function of game state plus the current bindings, so
+// rebinding a key while paused updates the hint underneath the dialog.
+function paintOverlay() {
+  if (game.state === 'ready') {
+    showOverlay('테트리스 퍼즐', '', '아무 키나 눌러 시작');
+  } else if (game.state === 'paused') {
+    const key = keyHint('pause');
+    showOverlay('일시정지', '', key ? `${key} 로 계속` : '화면을 클릭해 계속');
+  } else if (game.state === 'over') {
+    const key = keyHint('restart');
+    showOverlay('게임 오버', `점수 ${formatScore(game.score)} · ${game.lines}줄`,
+      key ? `${key} 을 눌러 다시 시작` : '화면을 클릭해 다시 시작');
+  } else {
+    ui.overlay.hidden = true;
+  }
 }
+
+/* ---------- key legend ---------- */
+
+function renderHelp() {
+  const rows = ACTIONS.flatMap(({ id, short }) => {
+    const codes = settings.bindings[id] || [];
+    if (codes.length === 0) return [];
+
+    const row = document.createElement('div');
+    const dt = document.createElement('dt');
+    dt.textContent = codes.map(keyLabel).join(' / ');
+    const dd = document.createElement('dd');
+    dd.textContent = short;
+    row.append(dt, dd);
+    return [row];
+  });
+  ui.helpList.replaceChildren(...rows);
+}
+
+/* ---------- toasts ---------- */
 
 let toastTimer = null;
 function toast(message) {
@@ -67,16 +113,18 @@ game.on('lock', ({ cleared, tspin }) => {
 
 game.on('score', syncStats);
 game.on('level', (level) => toast(`LEVEL ${level}`));
-
-game.on('state', (state) => {
-  if (state === 'paused') showOverlay('일시정지', '', 'P 또는 ESC 로 계속');
-  else if (state === 'playing') hideOverlay();
-});
-
-game.on('gameover', ({ score, lines }) => {
+game.on('state', paintOverlay);
+game.on('gameover', () => {
   input.releaseAll();
-  showOverlay('게임 오버', `점수 ${formatScore(score)} · ${lines}줄`, 'R 을 눌러 다시 시작');
+  paintOverlay();
 });
+
+/* ---------- input ---------- */
+
+function startGame() {
+  game.start();
+  syncStats();
+}
 
 const input = new Input({
   move: (dir) => game.move(dir),
@@ -90,35 +138,60 @@ const input = new Input({
   },
   restart: () => {
     game.reset();
-    game.start();
-    syncStats();
-    hideOverlay();
+    startGame();
+  },
+}, settings);
+input.attach();
+
+/* ---------- settings ---------- */
+
+const panel = new SettingsPanel({
+  root: $('settings'),
+  keymap: $('keymap'),
+  sliders: $('sliders'),
+  note: $('settings-note'),
+  open: $('settings-open'),
+  close: $('settings-close'),
+  reset: $('settings-reset'),
+  done: $('settings-done'),
+}, settings, {
+  onOpen: () => {
+    // Rebinding while pieces are falling would be unfair and confusing.
+    if (game.state === 'playing') game.togglePause();
+    input.enabled = false;
+    input.releaseAll();
+  },
+  onClose: () => {
+    input.enabled = true;
+  },
+  onChange: (next) => {
+    saveSettings(next);
+    input.applySettings(next);
+    renderHelp();
+    paintOverlay();
   },
 });
-input.attach();
 
 // The title overlay promises "press any key", so intercept the very first
 // keypress in the capture phase and spend it on starting rather than letting
 // it fall through to Input and, say, hard-drop the opening piece.
 window.addEventListener('keydown', (e) => {
-  if (game.state !== 'ready') return;
+  if (panel.isOpen || game.state !== 'ready') return;
   e.preventDefault();
   e.stopImmediatePropagation();
   startGame();
 }, true);
 
-function startGame() {
-  game.start();
-  syncStats();
-  hideOverlay();
-}
+/* ---------- pointer controls ---------- */
 
-// On-screen controls for touch devices.
 for (const button of document.querySelectorAll('[data-action]')) {
   const action = button.dataset.action;
-  const fire = (e) => {
+  button.addEventListener('pointerdown', (e) => {
     e.preventDefault();
-    if (game.state === 'ready' || game.state === 'over') return startGame();
+    if (game.state === 'ready' || game.state === 'over') {
+      if (game.state === 'over') game.reset();
+      return startGame();
+    }
     switch (action) {
       case 'left': game.move(-1); break;
       case 'right': game.move(1); break;
@@ -128,8 +201,7 @@ for (const button of document.querySelectorAll('[data-action]')) {
       case 'hold': game.holdPiece(); break;
       case 'pause': game.togglePause(); break;
     }
-  };
-  button.addEventListener('pointerdown', fire);
+  });
 }
 
 ui.overlay.addEventListener('pointerdown', () => {
@@ -140,6 +212,8 @@ ui.overlay.addEventListener('pointerdown', () => {
     startGame();
   }
 });
+
+/* ---------- loop ---------- */
 
 let last = performance.now();
 function frame(now) {
@@ -161,5 +235,6 @@ document.addEventListener('visibilitychange', () => {
 });
 
 syncStats();
-showOverlay('테트리스 퍼즐', '', '아무 키나 눌러 시작');
+renderHelp();
+paintOverlay();
 requestAnimationFrame(frame);

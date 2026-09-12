@@ -1,41 +1,34 @@
 // Keyboard handling with DAS (delayed auto shift) and ARR (auto repeat rate),
 // so holding left/right slides the piece the way players expect instead of
 // firing at the browser's own key-repeat rate.
+//
+// Bindings and timings come from the settings module and can change while the
+// game is running, so nothing here is a module constant.
 
-const DAS_MS = 133;
-const ARR_MS = 20;
-const SOFT_DROP_MS = 25;
-
-const BINDINGS = {
-  ArrowLeft: 'left',
-  ArrowRight: 'right',
-  ArrowDown: 'softDrop',
-  ArrowUp: 'rotateCW',
-  KeyX: 'rotateCW',
-  KeyZ: 'rotateCCW',
-  ControlLeft: 'rotateCCW',
-  ControlRight: 'rotateCCW',
-  KeyA: 'rotate180',
-  Space: 'hardDrop',
-  KeyC: 'hold',
-  ShiftLeft: 'hold',
-  ShiftRight: 'hold',
-  KeyP: 'pause',
-  Escape: 'pause',
-  KeyR: 'restart',
-};
+import { bindingLookup } from './settings.js';
 
 export class Input {
-  constructor(actions) {
+  constructor(actions, settings) {
     this.actions = actions;
+    this.enabled = true;
+
     this.held = new Set();
     this.dasTimer = 0;
     this.arrTimer = 0;
     this.softTimer = 0;
     this.direction = 0;
 
+    this.applySettings(settings);
+
     this.onKeyDown = this.onKeyDown.bind(this);
     this.onKeyUp = this.onKeyUp.bind(this);
+  }
+
+  applySettings(settings) {
+    this.lookup = bindingLookup(settings.bindings);
+    this.timing = { ...settings.timing };
+    // Keys held under the old bindings would otherwise stay stuck down.
+    this.releaseAll();
   }
 
   attach(target = window) {
@@ -44,7 +37,8 @@ export class Input {
   }
 
   onKeyDown(e) {
-    const action = BINDINGS[e.code];
+    if (!this.enabled) return;
+    const action = this.lookup[e.code];
     if (!action) return;
     e.preventDefault();
     if (e.repeat) return;
@@ -75,7 +69,7 @@ export class Input {
   }
 
   onKeyUp(e) {
-    const action = BINDINGS[e.code];
+    const action = this.lookup[e.code];
     if (!action) return;
     this.held.delete(action);
 
@@ -94,22 +88,33 @@ export class Input {
   }
 
   update(dt) {
+    if (!this.enabled) return;
+
     if (this.direction !== 0) {
       this.dasTimer += dt;
-      if (this.dasTimer >= DAS_MS) {
-        this.arrTimer += dt;
-        while (this.arrTimer >= ARR_MS) {
-          this.arrTimer -= ARR_MS;
-          if (!this.actions.move(this.direction)) break;
+      if (this.dasTimer >= this.timing.das) {
+        if (this.timing.arr <= 0) {
+          // Instant ARR: slide until a wall or the stack stops the piece.
+          while (this.actions.move(this.direction));
+        } else {
+          this.arrTimer += dt;
+          while (this.arrTimer >= this.timing.arr) {
+            this.arrTimer -= this.timing.arr;
+            if (!this.actions.move(this.direction)) break;
+          }
         }
       }
     }
 
     if (this.held.has('softDrop')) {
-      this.softTimer += dt;
-      while (this.softTimer >= SOFT_DROP_MS) {
-        this.softTimer -= SOFT_DROP_MS;
-        if (!this.actions.softDrop()) break;
+      if (this.timing.softDrop <= 0) {
+        while (this.actions.softDrop());
+      } else {
+        this.softTimer += dt;
+        while (this.softTimer >= this.timing.softDrop) {
+          this.softTimer -= this.timing.softDrop;
+          if (!this.actions.softDrop()) break;
+        }
       }
     }
   }
@@ -117,5 +122,8 @@ export class Input {
   releaseAll() {
     this.held.clear();
     this.direction = 0;
+    this.dasTimer = 0;
+    this.arrTimer = 0;
+    this.softTimer = 0;
   }
 }
