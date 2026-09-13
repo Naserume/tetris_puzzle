@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>테트리스 — 마라톤</title>
+<meta name="description" content="브라우저에서 즐기는 테트리스 퍼즐">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="backlink" href="index.html">← 메뉴</a>
+
+<main class="game">
+  <aside class="panel panel--left">
+    <section class="box box--hold">
+      <h2 class="box__title">HOLD</h2>
+      <canvas id="hold-canvas" class="preview preview--hold"></canvas>
+    </section>
+
+    <section class="box stats">
+      <div class="stat">
+        <span class="stat__label">SCORE</span>
+        <span class="stat__value" id="score">0</span>
+      </div>
+      <div class="stat">
+        <span class="stat__label">LINES</span>
+        <span class="stat__value" id="lines">0</span>
+      </div>
+      <div class="stat">
+        <span class="stat__label">LEVEL</span>
+        <span class="stat__value" id="level">1</span>
+      </div>
+    </section>
+  </aside>
+
+  <div class="well">
+    <canvas id="board" class="board"></canvas>
+    <div class="toast" id="toast" aria-live="polite"></div>
+    <div class="overlay" id="overlay" hidden>
+      <h1 class="overlay__title" id="overlay-title">테트리스 퍼즐</h1>
+      <p class="overlay__text" id="overlay-text"></p>
+      <p class="overlay__hint" id="overlay-hint">아무 키나 눌러 시작</p>
+    </div>
+  </div>
+
+  <aside class="panel panel--right">
+    <section class="box box--next">
+      <h2 class="box__title">NEXT</h2>
+      <canvas id="next-canvas" class="preview preview--next"></canvas>
+    </section>
+  </aside>
+</main>
+
+<nav class="touch" aria-label="터치 조작">
+  <button class="touch__btn" data-action="left" aria-label="왼쪽">←</button>
+  <button class="touch__btn" data-action="rotate" aria-label="회전">↻</button>
+  <button class="touch__btn" data-action="right" aria-label="오른쪽">→</button>
+  <button class="touch__btn" data-action="down" aria-label="소프트 드롭">↓</button>
+  <button class="touch__btn touch__btn--accent" data-action="drop" aria-label="하드 드롭">⤓</button>
+  <button class="touch__btn" data-action="hold" aria-label="홀드">H</button>
+</nav>
+
+<footer class="help">
+  <dl class="help__list" id="help-list"></dl>
+</footer>
+
+<button class="settings-open" id="settings-open" type="button" aria-label="설정 열기">
+  <span aria-hidden="true">⚙</span>
+</button>
+
+<div class="modal" id="settings" hidden>
+  <div class="modal__sheet" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <header class="modal__head">
+      <h2 class="modal__title" id="settings-title">설정</h2>
+      <button class="modal__close" id="settings-close" type="button" aria-label="닫기">✕</button>
+    </header>
+
+    <div class="modal__body">
+      <section class="modal__section">
+        <h3 class="modal__subtitle">조작키</h3>
+        <p class="modal__lead">키를 클릭한 뒤 원하는 키를 누르세요. 동작 하나에 최대 3개까지 지정할 수 있습니다.</p>
+        <div class="keymap" id="keymap"></div>
+      </section>
+
+      <section class="modal__section">
+        <h3 class="modal__subtitle">반응 속도</h3>
+        <div class="sliders" id="sliders"></div>
+      </section>
+    </div>
+
+    <footer class="modal__foot">
+      <p class="modal__note" id="settings-note" hidden></p>
+      <div class="modal__actions">
+        <button class="btn btn--ghost" id="settings-reset" type="button">기본값으로</button>
+        <button class="btn" id="settings-done" type="button">완료</button>
+      </div>
+    </footer>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -15,6 +15,7 @@ export const ACTIONS = [
   { id: 'hold',      label: '홀드',             short: '홀드' },
   { id: 'pause',     label: '일시정지',         short: '일시정지' },
   { id: 'restart',   label: '다시 시작',        short: '다시 시작' },
+  { id: 'undo',      label: '한 수 되돌리기',   short: '되돌리기' },
 ];
 
 export const DEFAULT_BINDINGS = {
@@ -28,6 +29,7 @@ export const DEFAULT_BINDINGS = {
   hold: ['KeyC', 'ShiftLeft'],
   pause: ['KeyP', 'Escape'],
   restart: ['KeyR'],
+  undo: ['Backspace', 'KeyU'],
 };
 
 export const DEFAULT_TIMING = { das: 133, arr: 20, softDrop: 25 };

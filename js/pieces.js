@@ -14,7 +14,12 @@ export const COLORS = {
   Z: '#f87171',
   J: '#60a5fa',
   L: '#fb923c',
+  // Not a tetromino: pre-set blocks in a puzzle board, which should read as
+  // scenery rather than as a piece someone placed.
+  X: '#5b6884',
 };
+
+export const GARBAGE = 'X';
 
 // Cell offsets per rotation state: 0 = spawn, 1 = CW, 2 = 180, 3 = CCW.
 export const SHAPES = {

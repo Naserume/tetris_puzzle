@@ -6,6 +6,8 @@
   --text: #e6e9f5;
   --text-dim: #8b93b0;
   --accent: #7dd3fc;
+  --ok: #4ade80;
+  --bad: #f87171;
   --radius: 12px;
   --gap: clamp(10px, 2vw, 20px);
 }
@@ -521,6 +523,306 @@ body {
   color: var(--text-dim);
 }
 
+/* ---------- menu ---------- */
+
+.page-menu body, .page-menu { justify-content: flex-start; }
+
+.menu {
+  width: 100%;
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding-block: clamp(16px, 5vh, 48px);
+}
+
+.menu__head { text-align: center; }
+
+.menu__title {
+  margin: 0;
+  font-size: clamp(24px, 5vw, 34px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.menu__sub {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+/* Four modes read best as a square block; auto-fit would leave a 3 + 1 gap. */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 16px;
+  text-decoration: none;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.card:hover {
+  background: rgba(255, 255, 255, 0.075);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.card.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.card__kind {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--accent);
+}
+
+.card__name {
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.card__desc {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.card__meta {
+  margin-top: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.menu__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.menu__listTitle {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+}
+
+.plist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.plist__row + .plist__row { border-top: 1px solid rgba(255, 255, 255, 0.05); }
+
+.plist__link {
+  display: grid;
+  grid-template-columns: 30px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  text-decoration: none;
+  color: inherit;
+  background: var(--surface);
+}
+
+.plist__link:hover { background: rgba(255, 255, 255, 0.08); }
+
+.plist__num {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.plist__name { font-size: 13px; }
+
+.plist__tags {
+  grid-column: 2;
+  grid-row: 2;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.plist__state {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+.plist__row.is-solved .plist__num { color: var(--ok); }
+.plist__row.is-solved .plist__state { color: var(--ok); }
+
+.linkbtn {
+  align-self: flex-start;
+  padding: 4px 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.linkbtn:hover { color: var(--text); }
+
+/* ---------- puzzle page chrome ---------- */
+
+.backlink {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 10;
+  padding: 8px 12px;
+  font-size: 12px;
+  text-decoration: none;
+  color: var(--text-dim);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.backlink:hover { color: var(--text); }
+
+.phead {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: 100%;
+  max-width: 720px;
+  padding-top: 4px;
+}
+
+.phead__badge {
+  padding: 3px 9px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.phead__title {
+  margin: 0;
+  font-size: clamp(16px, 3.6vw, 20px);
+  font-weight: 650;
+}
+
+.phead__num {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.page-puzzle .well { height: min(54vh, 470px); }
+
+.brief {
+  width: 100%;
+  max-width: 640px;
+  text-align: center;
+}
+
+.brief__text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.brief__hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--accent);
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.toolbar .btn { padding: 8px 14px; font-size: 12px; }
+.toolbar .btn:disabled { opacity: 0.4; cursor: default; }
+
+/* ---------- speech bubble ---------- */
+
+.bubble {
+  position: absolute;
+  z-index: 5;
+  max-width: min(240px, 86%);
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text);
+  background: #131a30;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.bubble.is-good { border-color: rgba(74, 222, 128, 0.55); }
+.bubble.is-bad { border-color: rgba(248, 113, 113, 0.55); }
+
+/* The tail is a rotated square pinned under the anchor column, so it keeps
+   pointing at the squares even when the bubble is nudged off the edge. */
+.bubble::after {
+  content: '';
+  position: absolute;
+  left: var(--tail, 20px);
+  width: 9px;
+  height: 9px;
+  margin-left: -5px;
+  background: inherit;
+  border: 1px solid transparent;
+  border-color: inherit;
+  transform: rotate(45deg);
+}
+
+.bubble:not(.is-below)::after {
+  bottom: -6px;
+  border-top-color: transparent;
+  border-left-color: transparent;
+}
+
+.bubble.is-below::after {
+  top: -6px;
+  border-bottom-color: transparent;
+  border-right-color: transparent;
+}
+
+/* ---------- result overlay ---------- */
+
+.overlay__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.overlay.is-good .overlay__title { color: var(--ok); }
+.overlay.is-bad .overlay__title { color: var(--bad); }
+
 /* ---------- responsive ---------- */
 
 @media (max-width: 620px) {
@@ -554,6 +856,12 @@ body {
   .preview--next { height: 52px; }
 
   .settings-open { top: 10px; right: 10px; width: 34px; height: 34px; }
+  .backlink { top: 10px; left: 10px; padding: 6px 10px; }
+  .page-puzzle .well { height: min(44vh, 400px); }
+  .phead { padding-top: 34px; }
+  .cards { grid-template-columns: 1fr; }
+  .plist__link { grid-template-columns: 26px 1fr; }
+  .plist__state { grid-column: 1 / -1; grid-row: 3; text-align: left; }
   .modal { padding: 0; align-items: flex-end; }
   .modal__sheet {
     width: 100%;

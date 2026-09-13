@@ -65,6 +65,8 @@ export class Input {
       case 'hold': this.actions.hold(); break;
       case 'pause': this.actions.pause(); break;
       case 'restart': this.actions.restart(); break;
+      // Only the puzzle pages supply this one.
+      case 'undo': this.actions.undo?.(); break;
     }
   }
 

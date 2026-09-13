@@ -1,6 +1,10 @@
 // Core tetris rules: board state, piece movement, locking, scoring.
 // This module is pure logic — it never touches the DOM, so the same engine
-// can later drive puzzle mode, a solver, or tests.
+// drives the endless game, the puzzle modes and the tests.
+//
+// Puzzle modes differ only through constructor options: a preset board, an
+// exact piece sequence instead of a random bag, and gravity switched off so a
+// piece waits as long as the player needs to think.
 
 import { TYPES, SHAPES, T_CORNERS, kicksFor } from './pieces.js';
 
@@ -24,6 +28,10 @@ export function createGrid(rows = ROWS, cols = COLS) {
   return Array.from({ length: rows }, () => new Array(cols).fill(null));
 }
 
+export function cloneGrid(grid) {
+  return grid.map((row) => row.slice());
+}
+
 export function cellsOf(piece) {
   return SHAPES[piece.type][piece.rot].map(([dx, dy]) => [piece.x + dx, piece.y + dy]);
 }
@@ -37,6 +45,7 @@ export function collides(grid, piece) {
 }
 
 // Shuffled 7-bag: every seven pieces contains each tetromino exactly once.
+// Never runs dry, which is what the endless game wants.
 class BagRandomizer {
   constructor(rng = Math.random) {
     this.rng = rng;
@@ -53,11 +62,33 @@ class BagRandomizer {
     }
     return this.bag.pop();
   }
+
+  save() { return { bag: this.bag.slice() }; }
+  load(state) { this.bag = state.bag.slice(); }
+}
+
+// A puzzle hands over an exact sequence. Running out is the end of the
+// attempt, not a failure in itself — the puzzle decides what the result means.
+class FixedSequence {
+  constructor(list) {
+    this.list = list.slice();
+    this.at = 0;
+  }
+
+  next() {
+    return this.at < this.list.length ? this.list[this.at++] : null;
+  }
+
+  save() { return { at: this.at }; }
+  load(state) { this.at = state.at; }
 }
 
 export class Game {
   constructor(options = {}) {
     this.options = options;
+    // Gravity off means a piece neither falls nor locks on its own: it waits
+    // until the player drops it. Puzzles are about the placement, not speed.
+    this.gravity = options.gravity !== false;
     this.listeners = {};
     this.reset();
   }
@@ -72,13 +103,15 @@ export class Game {
   }
 
   reset() {
-    this.grid = createGrid();
-    this.bag = new BagRandomizer(this.options.rng);
+    this.grid = this.options.grid ? cloneGrid(this.options.grid) : createGrid();
+    this.source = this.options.queue
+      ? new FixedSequence(this.options.queue)
+      : new BagRandomizer(this.options.rng);
     this.queue = [];
     this.refillQueue();
 
     this.current = null;
-    this.hold = null;
+    this.hold = this.options.hold || null;
     this.holdUsed = false;
 
     this.score = 0;
@@ -118,12 +151,23 @@ export class Game {
   }
 
   refillQueue() {
-    while (this.queue.length < NEXT_COUNT + 1) this.queue.push(this.bag.next());
+    while (this.queue.length < NEXT_COUNT + 1) {
+      const type = this.source.next();
+      if (type === null) break;
+      this.queue.push(type);
+    }
   }
 
   spawn(type = null) {
     const next = type || this.queue.shift();
     this.refillQueue();
+
+    if (!next) {
+      this.state = 'finished';
+      this.emit('state', this.state);
+      this.emit('exhausted');
+      return false;
+    }
 
     this.current = { type: next, rot: 0, x: SPAWN_X, y: SPAWN_Y };
     this.dropTimer = 0;
@@ -149,6 +193,9 @@ export class Game {
 
   update(dt) {
     if (this.state !== 'playing' || !this.current) return;
+    // With gravity off there is nothing to tick: no fall, and no lock delay
+    // either, so the piece stays put until the player drops it.
+    if (!this.gravity) return;
 
     const grounded = this.isGrounded();
     if (grounded !== this.grounded) {
@@ -307,18 +354,70 @@ export class Game {
   lockPiece() {
     if (!this.current) return;
     const tspin = this.detectTSpin();
+    // Captured before the clear, so a judge sees where the piece actually went.
+    const placement = {
+      type: this.current.type,
+      rot: this.current.rot,
+      x: this.current.x,
+      y: this.current.y,
+      cells: cellsOf(this.current),
+    };
 
-    for (const [x, y] of cellsOf(this.current)) {
+    for (const [x, y] of placement.cells) {
       if (y >= 0 && y < ROWS && x >= 0 && x < COLS) this.grid[y][x] = this.current.type;
     }
 
     const cleared = this.clearLines();
     this.applyScore(cleared, tspin);
 
-    this.emit('lock', { type: this.current.type, cleared, tspin });
+    this.emit('lock', { ...placement, cleared, tspin });
     this.holdUsed = false;
     this.current = null;
     this.spawn();
+  }
+
+  // A complete, detached copy of everything a move can change. Undo is built
+  // on these rather than on inverse operations, which line clears make messy.
+  snapshot() {
+    return {
+      grid: cloneGrid(this.grid),
+      current: this.current ? { ...this.current } : null,
+      hold: this.hold,
+      holdUsed: this.holdUsed,
+      queue: this.queue.slice(),
+      source: this.source.save(),
+      score: this.score,
+      lines: this.lines,
+      level: this.level,
+      combo: this.combo,
+      backToBack: this.backToBack,
+      state: this.state,
+    };
+  }
+
+  restore(snap) {
+    this.grid = cloneGrid(snap.grid);
+    this.current = snap.current ? { ...snap.current } : null;
+    this.hold = snap.hold;
+    this.holdUsed = snap.holdUsed;
+    this.queue = snap.queue.slice();
+    this.source.load(snap.source);
+    this.score = snap.score;
+    this.lines = snap.lines;
+    this.level = snap.level;
+    this.combo = snap.combo;
+    this.backToBack = snap.backToBack;
+    this.state = snap.state;
+
+    this.dropTimer = 0;
+    this.lockTimer = 0;
+    this.lockResets = 0;
+    this.grounded = false;
+    this.lastMoveWasRotation = false;
+
+    this.emit('restore');
+    this.emit('score');
+    this.emit('state', this.state);
   }
 
   clearLines() {

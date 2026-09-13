@@ -69,8 +69,15 @@ function paintOverlay() {
 
 /* ---------- key legend ---------- */
 
+// Actions this page actually responds to; `undo` belongs to the puzzle pages.
+const PAGE_ACTIONS = new Set([
+  'left', 'right', 'softDrop', 'hardDrop',
+  'rotateCW', 'rotateCCW', 'rotate180', 'hold', 'pause', 'restart',
+]);
+
 function renderHelp() {
   const rows = ACTIONS.flatMap(({ id, short }) => {
+    if (!PAGE_ACTIONS.has(id)) return [];
     const codes = settings.bindings[id] || [];
     if (codes.length === 0) return [];
 
