@@ -47,8 +47,14 @@
   </nav>
 
   <section class="menu__list">
-    <h2 class="menu__listTitle">문제 목록</h2>
-    <ol class="plist" id="puzzle-list"></ol>
+    <div class="menu__listHead">
+      <h2 class="menu__listTitle">유형별 목록</h2>
+      <p class="menu__listNote">
+        단계는 난이도 순서가 아니라 다루는 것이 다른 구역입니다.
+        실제 난이도는 각 유형 안의 초급·중급·고급으로 나뉩니다.
+      </p>
+    </div>
+    <div class="tiers" id="tier-list"></div>
     <button class="linkbtn" id="clear-progress" type="button">진행 기록 지우기</button>
   </section>
 </main>

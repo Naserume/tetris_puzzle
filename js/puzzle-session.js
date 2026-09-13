@@ -1,35 +1,38 @@
-// Runs one attempt at one puzzle on top of the engine.
+// Runs one attempt at one lesson or puzzle.
 //
-// It owns three things the endless game has no use for: a record of every
-// placement, a verdict on each of them, and the ability to rewind. Rewinding
-// works from full snapshots taken as each piece appears — line clears make
-// inverse operations messy, and a snapshot is both simpler and exact.
+// The session owns the engine, because an item is a list of stages and a new
+// stage means a new board and a new bag. Finishing a stage loads the next one,
+// which is how a lesson can carry on past a single correct answer.
 //
-// No DOM here. The page decides how long a verdict stays on screen and when
-// to call undo(); this class only says what happened.
+// Two ways of judging, from the same data:
+//
+//   lesson — every placement is answered the moment it locks. Only the
+//            best-ranked answer counts as right; anything else is explained
+//            and rewound, so the player is never stuck and never loses.
+//   puzzle — nothing is said while you play. Each placement is matched
+//            against the ranked answers and scored, and the whole breakdown
+//            arrives at the end.
+//
+// No DOM here. The page decides how long a verdict stays on screen and when to
+// move on; this class only says what happened.
 
-import { cellKey } from './puzzles.js';
+import { Game } from './engine.js';
+import { cellKey, gameOptionsFor, bestAnswer, maxScoreOf, gradeOf } from './content.js';
 
 export class PuzzleSession {
-  constructor(puzzle, game) {
-    this.puzzle = puzzle;
-    this.game = game;
+  constructor(item) {
+    this.item = item;
     this.listeners = {};
+    this.guided = item.kind === 'lesson';
+    this.maxScore = maxScoreOf(item);
 
-    this.history = [];   // snapshot at the start of each move
-    this.moves = [];     // placements made, in order
-    this.matched = new Set();
-    this.movesMade = 0;
-    this.status = 'playing';
+    this.results = [];        // every scored placement, across all stages
+    this.status = 'playing';  // playing | done
+    this.awaitingAdvance = false;
 
-    game.on('spawn', () => this.recordStart());
-    // A session may be attached to a game that is already under way; without
-    // this there would be no snapshot to rewind to for the first move.
-    if (game.current) this.recordStart();
-
-    game.on('lock', (placement) => this.judge(placement));
-    game.on('exhausted', () => this.finish());
-    game.on('gameover', () => this.fail('보드가 넘쳤습니다.'));
+    this.stageIndex = -1;
+    this.game = null;
+    this.loadStage(0);
   }
 
   on(event, fn) {
@@ -41,16 +44,53 @@ export class PuzzleSession {
     for (const fn of this.listeners[event] || []) fn(payload);
   }
 
-  get totalSteps() {
-    return this.puzzle.steps ? this.puzzle.steps.length : 0;
+  /* ---------- stages ---------- */
+
+  get stage() {
+    return this.item.stages[this.stageIndex];
   }
 
-  get stepsDone() {
-    return this.matched.size;
+  get stageCount() {
+    return this.item.stages.length;
   }
 
-  get canUndo() {
-    return this.movesMade > 0;
+  get movesInStage() {
+    return this.stage.moves.length;
+  }
+
+  loadStage(index) {
+    this.stageIndex = index;
+    this.history = [];
+    this.placements = [];
+    this.matched = new Set();
+    this.movesMade = 0;
+    this.awaitingAdvance = false;
+
+    this.game = new Game(gameOptionsFor(this.stage));
+    this.game.on('spawn', () => this.recordStart());
+    this.game.on('lock', (placement) => this.judge(placement));
+    this.game.start();
+
+    this.emit('stage', {
+      index,
+      total: this.stageCount,
+      stage: this.stage,
+      game: this.game,
+    });
+  }
+
+  // Called by the page once it has finished showing whatever the last move
+  // deserved. Keeping it out of judge() is what lets a lesson hold a tick on
+  // screen before the board is swapped out from under it.
+  advance() {
+    if (!this.awaitingAdvance) return false;
+    this.awaitingAdvance = false;
+    if (this.stageIndex + 1 < this.stageCount) {
+      this.loadStage(this.stageIndex + 1);
+      return true;
+    }
+    this.finish();
+    return false;
   }
 
   /* ---------- history ---------- */
@@ -62,8 +102,12 @@ export class PuzzleSession {
     this.history.length = this.movesMade + 1;
   }
 
+  get canUndo() {
+    return this.movesMade > 0 && this.status === 'playing';
+  }
+
   undo() {
-    if (this.movesMade === 0) return false;
+    if (!this.canUndo) return false;
     this.movesMade--;
     this.history.length = this.movesMade + 1;
     this.rewindTo(this.history[this.movesMade]);
@@ -71,7 +115,8 @@ export class PuzzleSession {
     return true;
   }
 
-  restart() {
+  // Restarts the current stage only; restartAll() goes back to stage one.
+  restartStage() {
     if (this.history.length === 0) return false;
     this.movesMade = 0;
     this.history.length = 1;
@@ -80,101 +125,146 @@ export class PuzzleSession {
     return true;
   }
 
-  rewindTo(snapshot) {
-    this.moves.length = this.movesMade;
-    // Ordered puzzles match step i with move i, so the matched set shrinks with
-    // the move count; unordered ones are rebuilt from whatever moves survive.
-    this.matched = new Set();
+  restartAll() {
+    this.results = [];
     this.status = 'playing';
-    this.game.restore(snapshot);
-    for (const placement of this.moves) this.rematch(placement);
+    this.loadStage(0);
+    return true;
   }
 
-  rematch(placement) {
-    if (this.puzzle.mode !== 'guided') return;
-    const index = this.findStep(cellKey(placement.cells));
-    if (index !== -1) this.matched.add(index);
+  rewindTo(snapshot) {
+    this.placements.length = this.movesMade;
+    this.results.length = Math.max(0, this.results.length - 1);
+    this.awaitingAdvance = false;
+    this.status = 'playing';
+
+    // The matched set is rebuilt from the placements that survive, so an
+    // unordered stage stays consistent whichever move was taken back.
+    this.matched = new Set();
+    this.game.restore(snapshot);
+    for (const placement of this.placements) {
+      const index = this.findMove(cellKey(placement.cells));
+      if (index !== -1) this.matched.add(index);
+    }
   }
 
   /* ---------- judging ---------- */
 
-  findStep(key) {
-    const steps = this.puzzle.steps || [];
-    if (this.puzzle.ordered === false) {
-      return steps.findIndex((step, i) => !this.matched.has(i) && cellKey(step.cells) === key);
+  // Which move of this stage a placement answers, or -1. Ordered stages must
+  // be answered in sequence; unordered ones accept any move still open.
+  findMove(key) {
+    const moves = this.stage.moves;
+    const hit = (move) => move.answers.some((a) => cellKey(a.cells) === key);
+
+    if (this.stage.ordered === false) {
+      return moves.findIndex((move, i) => !this.matched.has(i) && hit(move));
     }
     const next = this.matched.size;
-    return next < steps.length && cellKey(steps[next].cells) === key ? next : -1;
+    return next < moves.length && hit(moves[next]) ? next : -1;
+  }
+
+  // The move a placement is scored against — for an ordered stage this is the
+  // next unanswered one whether or not the placement matches it.
+  currentMoveIndex() {
+    return this.stage.ordered === false
+      ? this.stage.moves.findIndex((move, i) => !this.matched.has(i))
+      : Math.min(this.matched.size, this.stage.moves.length - 1);
   }
 
   judge(placement) {
     if (this.status !== 'playing') return;
 
     this.movesMade++;
-    this.moves[this.movesMade - 1] = placement;
-    this.moves.length = this.movesMade;
-
-    if (this.puzzle.mode === 'free') {
-      this.emit('move', { placement, movesMade: this.movesMade });
-      return;
-    }
+    this.placements[this.movesMade - 1] = placement;
+    this.placements.length = this.movesMade;
 
     const key = cellKey(placement.cells);
-    const index = this.findStep(key);
+    const moveIndex = this.findMove(key);
+    const scoredIndex = moveIndex === -1 ? this.currentMoveIndex() : moveIndex;
+    const move = this.stage.moves[Math.max(0, scoredIndex)];
+    const answer = move.answers.find((a) => cellKey(a.cells) === key) || null;
+    const best = bestAnswer(move);
 
-    if (index === -1) {
-      const known = (this.puzzle.wrong || []).find((w) => cellKey(w.cells) === key);
+    if (this.guided) return this.judgeGuided(placement, move, answer, best, moveIndex);
+    return this.judgeScored(placement, move, answer, best, scoredIndex);
+  }
+
+  // A lesson accepts only the best answer. A lower-ranked one is still wrong,
+  // but it gets its own explanation rather than the generic one — "that is a
+  // T-spin, just not the biggest one" teaches more than "no".
+  judgeGuided(placement, move, answer, best, moveIndex) {
+    const correct = moveIndex !== -1 && answer !== null && answer.score >= best.score;
+
+    if (!correct) {
+      const known = (move.wrong || []).find((w) => cellKey(w.cells) === cellKey(placement.cells));
       this.emit('verdict', {
         ok: false,
-        note: known?.note ?? this.puzzle.defaultWrong ?? null,
         cells: placement.cells,
+        note: answer?.note ?? known?.note ?? move.defaultWrong ?? null,
+        label: answer?.label ?? null,
       });
       return;
     }
 
-    this.matched.add(index);
-    const done = this.matched.size >= this.totalSteps;
+    this.matched.add(moveIndex);
+    this.results.push({ stage: this.stageIndex, move: moveIndex, cells: placement.cells, answer, best });
+
+    const stageDone = this.matched.size >= this.movesInStage;
+    const lastStage = this.stageIndex + 1 >= this.stageCount;
+    if (stageDone) this.awaitingAdvance = true;
+
     this.emit('verdict', {
       ok: true,
-      note: this.puzzle.steps[index].note ?? null,
       cells: placement.cells,
-      done,
+      note: answer.note ?? null,
+      label: answer.label ?? null,
+      stageDone,
+      lastStage,
     });
-    if (done) this.succeed(this.puzzle.success ?? null);
+  }
+
+  // A puzzle says nothing now. It records what the placement was worth and
+  // keeps going, so a bad move costs points instead of stopping play.
+  judgeScored(placement, move, answer, best, scoredIndex) {
+    if (scoredIndex !== -1) this.matched.add(scoredIndex);
+    this.results.push({
+      stage: this.stageIndex,
+      move: scoredIndex,
+      cells: placement.cells,
+      answer,
+      best,
+      note: answer ? answer.note : (move.defaultWrong ?? null),
+    });
+
+    const stageDone = this.movesMade >= this.movesInStage;
+    if (stageDone) this.awaitingAdvance = true;
+    this.emit('move', { index: this.movesMade, cells: placement.cells, stageDone });
   }
 
   /* ---------- outcome ---------- */
 
-  // Called when the bag runs out.
-  //
-  // Only free puzzles are judged here. A guided puzzle deliberately has no
-  // losing end: a wrong move rewinds itself and hands the piece back, so
-  // running out is a transient state on the way to a retry, not a failure to
-  // announce. Declaring one would slam a result panel over the board at the
-  // exact moment the player is reading why their move was wrong.
+  get score() {
+    return this.results.reduce((sum, r) => sum + (r.answer?.score ?? 0), 0);
+  }
+
+  get percent() {
+    return this.maxScore === 0 ? 0 : Math.round((this.score / this.maxScore) * 100);
+  }
+
   finish() {
-    if (this.status !== 'playing') return;
-    if (this.puzzle.mode !== 'free') return;
-    if (this.goalMet()) this.succeed(this.puzzle.success ?? null);
-    else this.fail(this.puzzle.failure ?? null);
-  }
-
-  goalMet() {
-    const goal = this.puzzle.goal || {};
-    if (goal.clearAll) return this.game.grid.every((row) => row.every((cell) => cell === null));
-    if (goal.lines) return this.game.lines >= goal.lines;
-    return true;
-  }
-
-  succeed(note) {
-    if (this.status === 'solved') return;
-    this.status = 'solved';
-    this.emit('finished', { ok: true, note, moves: this.movesMade });
-  }
-
-  fail(note) {
-    if (this.status !== 'playing') return;
-    this.status = 'failed';
-    this.emit('finished', { ok: false, note, moves: this.movesMade });
+    if (this.status === 'done') return;
+    this.status = 'done';
+    const percent = this.percent;
+    this.emit('finished', {
+      ok: this.guided ? true : percent >= 100,
+      guided: this.guided,
+      score: this.score,
+      max: this.maxScore,
+      percent,
+      grade: gradeOf(percent),
+      results: this.results.slice(),
+      outro: this.item.outro ?? null,
+      moves: this.results.length,
+    });
   }
 }

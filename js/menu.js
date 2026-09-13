@@ -1,81 +1,127 @@
-// The front page: pick a mode, or jump straight to a numbered puzzle.
+// The front page: pick a mode, or walk the taxonomy and open any item directly.
 
-import { PUZZLES, listByKind } from './puzzles.js';
-import { loadProgress, entryFor, reviewOrder, clearProgress } from './progress.js';
+import {
+  ITEMS, lessonItems, puzzleItems, itemsIn, indexOfItem,
+} from './content.js';
+import {
+  TIERS, LEVELS, topicsInTier, topicById, levelName, plannedFor,
+} from './taxonomy.js';
+import { loadProgress, entryFor, clearProgress } from './progress.js';
+import { reviewQueue } from './content.js';
 import { loadSettings, saveSettings } from './settings.js';
 import { SettingsPanel } from './settings-ui.js';
 
 const $ = (id) => document.getElementById(id);
 
 const KIND_LABEL = { lesson: '레슨', puzzle: '퍼즐' };
-const MODE_LABEL = { guided: '한 수씩', free: '끝까지 두고 채점' };
 
-function countSolved(puzzles) {
-  return puzzles.filter((p) => entryFor(p.id).solved).length;
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
 }
+
+const solvedCount = (items) => items.filter((i) => entryFor(i.id).solved).length;
+
+/* ---------- mode cards ---------- */
 
 function renderCards() {
-  const lessons = listByKind('lesson');
-  const solvedLessons = countSolved(lessons);
-  $('meta-lesson').textContent = `${solvedLessons} / ${lessons.length} 완료`;
+  const lessons = lessonItems();
+  $('meta-lesson').textContent = `${solvedCount(lessons)} / ${lessons.length} 완료`;
 
-  const review = reviewOrder(PUZZLES);
-  const unsolved = review.filter((p) => !entryFor(p.id).solved).length;
-  $('meta-review').textContent = review.length === 0
-    ? '아직 풀어본 문제가 없습니다'
-    : `${review.length}문제 · 미해결 ${unsolved}`;
+  const review = reviewQueue(loadProgress());
+  $('meta-review').textContent = review.length
+    ? `${review.length}문제 대기`
+    : '복습할 문제가 없습니다';
+  document.querySelector('.card--review').classList.toggle('is-disabled', review.length === 0);
 
-  const card = document.querySelector('.card--review');
-  card.classList.toggle('is-disabled', review.length === 0);
-  if (review.length === 0) card.setAttribute('aria-disabled', 'true');
-  else card.removeAttribute('aria-disabled');
+  const puzzles = puzzleItems();
+  $('meta-random').textContent = `퍼즐 ${puzzles.length}문제`;
 
-  $('meta-random').textContent = `전체 ${PUZZLES.length}문제`;
-
-  const solvedAll = countSolved(PUZZLES);
-  $('meta-play').textContent = solvedAll > 0 ? `퍼즐 ${solvedAll}개 해결` : '기록 없음';
+  const solved = solvedCount(ITEMS);
+  $('meta-play').textContent = solved > 0 ? `문제 ${solved}개 해결` : '기록 없음';
 }
 
-// Every puzzle is addressable by its position, so "n번째 문제" is a link.
-function renderList() {
-  const list = $('puzzle-list');
-  const rows = PUZZLES.map((puzzle, i) => {
-    const entry = entryFor(puzzle.id);
-    const item = document.createElement('li');
-    item.className = 'plist__row' + (entry.solved ? ' is-solved' : '');
+/* ---------- the taxonomy, walked ---------- */
 
-    const link = document.createElement('a');
-    link.className = 'plist__link';
-    link.href = `puzzle.html?n=${i + 1}`;
+function itemRow(item) {
+  const entry = entryFor(item.id);
+  const row = el('li', 'irow' + (entry.solved ? ' is-solved' : ''));
 
-    const num = document.createElement('span');
-    num.className = 'plist__num';
-    num.textContent = String(i + 1).padStart(2, '0');
+  const link = el('a', 'irow__link');
+  link.href = `puzzle.html?n=${indexOfItem(item.id)}`;
 
-    const name = document.createElement('span');
-    name.className = 'plist__name';
-    name.textContent = puzzle.title;
+  link.append(
+    el('span', 'irow__num', String(indexOfItem(item.id)).padStart(2, '0')),
+    el('span', 'irow__name', item.title),
+    el('span', `irow__kind irow__kind--${item.kind}`, KIND_LABEL[item.kind]),
+  );
 
-    const tags = document.createElement('span');
-    tags.className = 'plist__tags';
-    tags.textContent = `${KIND_LABEL[puzzle.kind] || puzzle.kind} · ${MODE_LABEL[puzzle.mode]}`;
+  const state = el('span', 'irow__state');
+  if (item.kind === 'puzzle' && entry.bestPercent !== null) state.textContent = `${entry.bestPercent}점`;
+  else if (entry.solved) state.textContent = '해결';
+  else if (entry.attempts > 0) state.textContent = `시도 ${entry.attempts}`;
+  link.append(state);
 
-    const state = document.createElement('span');
-    state.className = 'plist__state';
-    if (entry.solved) state.textContent = `해결 · 최소 ${entry.bestMoves}수`;
-    else if (entry.attempts > 0) state.textContent = `시도 ${entry.attempts}회`;
-    else state.textContent = '';
+  row.append(link);
+  return row;
+}
 
-    link.append(num, name, tags, state);
-    item.append(link);
-    return item;
-  });
-  list.replaceChildren(...rows);
+// A category is shown when it holds something or when it is on the plan.
+// An empty-but-planned slot is information: it says the shape is intended.
+function categoryBlock(topic, level) {
+  const items = itemsIn(topic.id, level.id);
+  const planned = plannedFor(topic.id, level.id);
+  if (items.length === 0 && planned.length === 0) return null;
+
+  const block = el('div', 'cat' + (items.length === 0 ? ' is-planned' : ''));
+
+  const head = el('div', 'cat__head');
+  head.append(el('span', 'cat__level', levelName(level.id)));
+  head.append(el('span', 'cat__count', items.length ? `${items.length}문제` : '준비 중'));
+  block.append(head);
+
+  if (items.length) {
+    const list = el('ul', 'cat__items');
+    list.append(...items.map(itemRow));
+    block.append(list);
+  } else {
+    block.append(el('p', 'cat__planned', planned.join(' · ')));
+  }
+  return block;
+}
+
+function topicBlock(topic) {
+  const blocks = LEVELS.map((level) => categoryBlock(topic, level)).filter(Boolean);
+  if (blocks.length === 0) return null;
+
+  const section = el('section', 'topic');
+  const head = el('h4', 'topic__name', topic.name);
+  if (topic.note) head.append(el('span', 'topic__note', topic.note));
+  section.append(head, ...blocks);
+  return section;
+}
+
+function renderTiers() {
+  const blocks = TIERS.map((tier) => {
+    const topics = topicsInTier(tier.id).map(topicBlock).filter(Boolean);
+    if (topics.length === 0) return null;
+
+    const section = el('section', 'tier');
+    const head = el('div', 'tier__head');
+    head.append(el('h3', 'tier__name', tier.name));
+    head.append(el('span', 'tier__tagline', tier.tagline));
+    section.append(head, ...topics);
+    return section;
+  }).filter(Boolean);
+
+  $('tier-list').replaceChildren(...blocks);
 }
 
 function render() {
   renderCards();
-  renderList();
+  renderTiers();
 }
 
 $('clear-progress').addEventListener('click', () => {

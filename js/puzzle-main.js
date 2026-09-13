@@ -1,42 +1,51 @@
-// The puzzle player. One page serves lessons, review and random puzzles —
-// they differ only in which puzzles they line up and in what order.
+// The player for lessons and puzzles. One page serves every mode — they differ
+// only in which items they line up and in what order.
 //
-// The engine runs with gravity off and a fixed bag, so a piece waits as long
-// as you need. Every placement is recorded; a wrong one in a guided puzzle
-// marks itself, explains itself, and rewinds.
+// The engine runs with gravity off and a fixed bag, so a piece waits as long as
+// you need. The session owns the engine, because an item can span several
+// boards; this file reads session.game rather than holding one of its own.
 
-import { Game } from './engine.js';
 import { Renderer } from './render.js';
 import { Input } from './input.js';
 import { ACTIONS, loadSettings, saveSettings, keyLabel } from './settings.js';
 import { SettingsPanel } from './settings-ui.js';
 import {
-  PUZZLES, listByKind, puzzleAt, puzzleById, randomPuzzle, indexOfPuzzle, gameOptionsFor,
-} from './puzzles.js';
+  ITEMS, itemAt, itemById, indexOfItem, randomItem,
+  lessonQueue, reviewQueue, moveCountOf,
+} from './content.js';
+import { categoryName } from './taxonomy.js';
 import { PuzzleSession } from './puzzle-session.js';
-import { recordAttempt, recordSolved, entryFor, reviewOrder } from './progress.js';
+import { loadProgress, recordAttempt, recordResult } from './progress.js';
 
 const $ = (id) => document.getElementById(id);
 
-// How long a wrong placement stays on the board before it rewinds itself.
-// Long enough to see what you did, short enough not to feel like a penalty.
+// How long a wrong placement stays on the board before it rewinds itself:
+// long enough to see what you did, short enough not to feel like a penalty.
 const REWIND_DELAY_MS = 1000;
+// How long a tick stays up before the next board replaces it.
+const ADVANCE_DELAY_MS = 1100;
 
-const MODE_LABEL = { lesson: '레슨', review: '복습', random: '랜덤 퍼즐', single: '퍼즐' };
+const MODE_LABEL = { lesson: '레슨', review: '복습', random: '랜덤 퍼즐', single: '문제' };
 
 const ui = {
   mode: $('puzzle-mode'),
   title: $('puzzle-title'),
+  cat: $('puzzle-cat'),
   num: $('puzzle-num'),
   progress: $('progress'),
+  stage: $('stage'),
   moves: $('moves'),
   brief: $('brief'),
   hint: $('hint'),
   bubble: $('bubble'),
+  stagecard: $('stagecard'),
   well: $('well'),
   result: $('result'),
   resultTitle: $('result-title'),
+  resultScore: $('result-score'),
   resultText: $('result-text'),
+  resultOutro: $('result-outro'),
+  breakdown: $('result-breakdown'),
   helpList: $('help-list'),
   undo: $('btn-undo'),
 };
@@ -45,66 +54,70 @@ const settings = loadSettings();
 const renderer = new Renderer($('board'), $('hold-canvas'), $('next-canvas'));
 
 let route = resolveRoute();
-let puzzle = null;
-let game = null;
+let item = null;
 let session = null;
 let attemptRecorded = false;
 let inputLocked = false;
 let rewindTimer = null;
-let resultTimer = null;
+let advanceTimer = null;
+let cardTimer = null;
 
 /* ---------- routing ---------- */
 
-// The URL decides what to play: an explicit puzzle (?n= or ?id=) or a mode
-// that supplies its own running order.
+// The URL decides what to play: an explicit item (?n= or ?id=) or a mode that
+// supplies its own running order.
 function resolveRoute() {
   const params = new URLSearchParams(location.search);
-  const byIndex = Number(params.get('n'));
   const byId = params.get('id');
+  const byIndex = Number(params.get('n'));
 
-  if (byId && puzzleById(byId)) return { mode: 'single', list: [puzzleById(byId)], at: 0 };
-  if (Number.isInteger(byIndex) && puzzleAt(byIndex)) {
-    return { mode: 'single', list: PUZZLES.slice(), at: byIndex - 1 };
+  if (byId && itemById(byId)) {
+    return { mode: 'single', list: ITEMS.slice(), at: indexOfItem(byId) - 1 };
+  }
+  if (Number.isInteger(byIndex) && itemAt(byIndex)) {
+    return { mode: 'single', list: ITEMS.slice(), at: byIndex - 1 };
   }
 
+  const progress = loadProgress();
   const mode = params.get('mode');
-  if (mode === 'review') {
-    const list = reviewOrder(PUZZLES);
-    if (list.length) return { mode: 'review', list, at: 0 };
-    return { mode: 'random', list: [randomPuzzle()], at: 0 };
-  }
-  if (mode === 'random') return { mode: 'random', list: [randomPuzzle()], at: 0 };
 
-  const lessons = listByKind('lesson');
-  const firstUnsolved = lessons.findIndex((p) => !entryFor(p.id).solved);
-  return { mode: 'lesson', list: lessons, at: firstUnsolved === -1 ? 0 : firstUnsolved };
+  if (mode === 'review') {
+    const list = reviewQueue(progress);
+    if (list.length) return { mode: 'review', list, at: 0 };
+    return { mode: 'random', list: [randomItem()], at: 0 };
+  }
+  if (mode === 'random') return { mode: 'random', list: [randomItem()], at: 0 };
+
+  const { list, at } = lessonQueue(progress);
+  return { mode: 'lesson', list, at };
 }
 
-function advance() {
+function advanceItem() {
   if (route.mode === 'random') {
-    route.list = [randomPuzzle(Math.random, puzzle?.id)];
+    route.list = [randomItem(Math.random, item?.id)];
     route.at = 0;
-  } else if (route.at + 1 < route.list.length) {
-    route.at += 1;
   } else {
-    route.at = 0;
+    route.at = (route.at + 1) % route.list.length;
   }
   load(route.list[route.at]);
 }
 
-/* ---------- loading a puzzle ---------- */
+/* ---------- loading ---------- */
+
+function clearTimers() {
+  clearTimeout(rewindTimer);
+  clearTimeout(advanceTimer);
+  clearTimeout(cardTimer);
+}
 
 function load(next) {
-  clearTimeout(rewindTimer);
-  clearTimeout(resultTimer);
+  clearTimers();
   inputLocked = false;
   attemptRecorded = false;
-  puzzle = next;
+  item = next;
 
-  game = new Game(gameOptionsFor(puzzle));
-  session = new PuzzleSession(puzzle, game);
+  session = new PuzzleSession(item);
   wireSession();
-  game.start();
 
   renderer.clearMark();
   hideBubble();
@@ -112,72 +125,96 @@ function load(next) {
   paintChrome();
 
   const url = new URL(location.href);
-  url.searchParams.set('id', puzzle.id);
+  url.searchParams.set('id', item.id);
   url.searchParams.delete('n');
   history.replaceState(null, '', url);
 }
 
 function paintChrome() {
-  ui.mode.textContent = MODE_LABEL[route.mode] || '퍼즐';
-  ui.title.textContent = puzzle.title;
-  ui.num.textContent = `${indexOfPuzzle(puzzle.id)} / ${PUZZLES.length}`;
-  ui.brief.textContent = puzzle.brief || '';
-  ui.hint.textContent = puzzle.hint ? `힌트 — ${puzzle.hint}` : '';
+  ui.mode.textContent = MODE_LABEL[route.mode] || '문제';
+  ui.title.textContent = item.title;
+  ui.cat.textContent = categoryName(item.topic, item.level);
+  ui.num.textContent = `${indexOfItem(item.id)} / ${ITEMS.length}`;
+  ui.brief.textContent = item.brief || '';
+
+  const hint = session.stage.moves[0]?.hint;
+  ui.hint.textContent = hint ? `힌트 — ${hint}` : '';
   ui.hint.hidden = true;
-  $('btn-hint').disabled = !puzzle.hint;
+  $('btn-hint').disabled = !hint;
+
   paintStats();
 }
 
 function paintStats() {
   ui.moves.textContent = session.movesMade;
-  ui.progress.textContent = puzzle.mode === 'guided'
-    ? `${session.stepsDone} / ${session.totalSteps} 수`
-    : `조각 ${game.queue.length + (game.current ? 1 : 0)}개 남음`;
+  ui.stage.textContent = `${session.stageIndex + 1} / ${session.stageCount}`;
+  ui.progress.textContent = session.guided
+    ? `${session.matched.size} / ${session.movesInStage} 수`
+    : `${session.movesMade} / ${session.movesInStage} 수`;
   ui.undo.disabled = !session.canUndo;
 }
 
 /* ---------- verdicts ---------- */
 
 function wireSession() {
+  session.on('stage', ({ index, stage }) => {
+    renderer.clearMark();
+    hideBubble();
+    paintChrome();
+    if (index > 0 && stage.label) showStageCard(stage.label);
+  });
+
   session.on('verdict', (verdict) => {
     markAttempt();
     renderer.mark(verdict.cells, verdict.ok);
     showBubble(verdict.note, verdict.cells, verdict.ok);
     paintStats();
 
-    if (verdict.ok) return;
+    if (!verdict.ok) {
+      // Hold the wrong placement on screen, then put it back so the player can
+      // simply try again — no button to press, no lost position.
+      inputLocked = true;
+      rewindTimer = setTimeout(() => {
+        session.undo();
+        inputLocked = false;
+        paintStats();
+      }, REWIND_DELAY_MS);
+      return;
+    }
 
-    // Hold the wrong placement on screen, then put it back so the player can
-    // simply try again — no button to press, no lost position.
-    inputLocked = true;
-    rewindTimer = setTimeout(() => {
-      session.undo();
-      inputLocked = false;
-      paintStats();
-    }, REWIND_DELAY_MS);
+    if (verdict.stageDone) {
+      inputLocked = true;
+      advanceTimer = setTimeout(() => {
+        session.advance();
+        inputLocked = false;
+        paintStats();
+      }, ADVANCE_DELAY_MS);
+    }
   });
 
-  session.on('move', () => {
+  // Puzzles stay quiet while you play; everything is said at the end.
+  session.on('move', ({ stageDone }) => {
     markAttempt();
     paintStats();
+    if (stageDone) session.advance();
   });
 
   session.on('undo', () => paintStats());
-
-  session.on('finished', ({ ok, note, moves }) => {
-    if (ok) recordSolved(puzzle.id, moves);
+  session.on('finished', (result) => {
+    recordResult(item.id, {
+      solved: result.ok,
+      percent: result.percent,
+      moves: result.moves,
+    });
+    showResult(result);
     paintStats();
-    // Let the tick and its bubble stand for a moment first — the result panel
-    // blurs the board, and covering the winning move instantly robs it.
-    clearTimeout(resultTimer);
-    resultTimer = setTimeout(() => showResult(ok, note), puzzle.mode === 'guided' ? 950 : 300);
   });
 }
 
 function markAttempt() {
   if (attemptRecorded) return;
   attemptRecorded = true;
-  recordAttempt(puzzle.id);
+  recordAttempt(item.id);
 }
 
 /* ---------- speech bubble ---------- */
@@ -219,18 +256,79 @@ function showBubble(note, cells, ok) {
   });
 }
 
+// A brief banner when a lesson swaps the board out from under the player.
+function showStageCard(label) {
+  ui.stagecard.textContent = label;
+  ui.stagecard.hidden = false;
+  cardTimer = setTimeout(() => { ui.stagecard.hidden = true; }, 1400);
+}
+
 /* ---------- result ---------- */
 
 function hideResult() {
   ui.result.hidden = true;
 }
 
-function showResult(ok, note) {
-  ui.resultTitle.textContent = ok ? '해결' : '아직입니다';
-  ui.resultText.textContent = note || (ok ? '' : '되돌려서 다시 시도해 보세요.');
-  ui.result.classList.toggle('is-good', ok);
-  ui.result.classList.toggle('is-bad', !ok);
+function showResult(result) {
+  const { guided, ok, percent, grade, results, outro } = result;
+
+  ui.resultTitle.textContent = guided ? '레슨 완료' : grade.name;
+  ui.result.querySelector('.modal__sheet').dataset.tone = guided ? 'good' : grade.tone;
+
+  ui.resultScore.hidden = guided;
+  ui.resultScore.textContent = `${percent}점`;
+
+  ui.resultText.textContent = guided
+    ? '모든 수를 맞게 두었습니다.'
+    : (ok ? '최선의 수만 골랐습니다.' : '각 수가 최선과 얼마나 달랐는지 아래에 있습니다.');
+
+  // Puzzles show the move-by-move comparison; a lesson has already said
+  // everything it had to say, one bubble at a time.
+  ui.breakdown.hidden = guided;
+  if (!guided) ui.breakdown.replaceChildren(...results.map(breakdownRow));
+
+  ui.resultOutro.hidden = !outro;
+  ui.resultOutro.textContent = outro || '';
+
   ui.result.hidden = false;
+}
+
+function breakdownRow(entry, index) {
+  const row = document.createElement('li');
+  row.className = 'bdrow';
+  const matchedBest = entry.answer && entry.answer.score >= entry.best.score;
+  row.dataset.tone = matchedBest ? 'good' : entry.answer ? 'mid' : 'bad';
+
+  const head = document.createElement('div');
+  head.className = 'bdrow__head';
+
+  const num = document.createElement('span');
+  num.className = 'bdrow__num';
+  num.textContent = `${index + 1}수`;
+
+  const name = document.createElement('span');
+  name.className = 'bdrow__name';
+  name.textContent = entry.answer ? entry.answer.label : '기록에 없는 수';
+
+  const score = document.createElement('span');
+  score.className = 'bdrow__score';
+  score.textContent = `${entry.answer?.score ?? 0} / ${entry.best.score}`;
+
+  head.append(num, name, score);
+
+  const note = document.createElement('p');
+  note.className = 'bdrow__note';
+  note.textContent = entry.answer?.note ?? entry.note ?? '';
+
+  row.append(head, note);
+
+  if (!matchedBest) {
+    const best = document.createElement('p');
+    best.className = 'bdrow__best';
+    best.textContent = `최선 — ${entry.best.label}: ${entry.best.note}`;
+    row.append(best);
+  }
+  return row;
 }
 
 /* ---------- controls ---------- */
@@ -238,8 +336,7 @@ function showResult(ok, note) {
 const actions = {
   undo: () => {
     if (inputLocked) return;
-    clearTimeout(rewindTimer);
-    clearTimeout(resultTimer);
+    clearTimers();
     hideBubble();
     renderer.clearMark();
     hideResult();
@@ -247,30 +344,29 @@ const actions = {
     paintStats();
   },
   restart: () => {
-    clearTimeout(rewindTimer);
-    clearTimeout(resultTimer);
+    clearTimers();
     inputLocked = false;
     hideBubble();
     renderer.clearMark();
     hideResult();
-    session.restart();
+    session.restartAll();
     paintStats();
   },
 };
 
 ui.undo.addEventListener('click', actions.undo);
 $('btn-restart').addEventListener('click', actions.restart);
-$('btn-next').addEventListener('click', advance);
+$('btn-next').addEventListener('click', advanceItem);
 $('btn-hint').addEventListener('click', () => { ui.hint.hidden = !ui.hint.hidden; });
 $('result-retry').addEventListener('click', actions.restart);
-$('result-next').addEventListener('click', advance);
+$('result-next').addEventListener('click', advanceItem);
 
 const input = new Input({
-  move: (dir) => !inputLocked && game.move(dir),
-  softDrop: () => !inputLocked && game.softDrop(),
-  hardDrop: () => { if (!inputLocked) game.hardDrop(); },
-  rotate: (dir) => !inputLocked && game.rotate(dir),
-  hold: () => !inputLocked && game.holdPiece(),
+  move: (dir) => !inputLocked && session.game.move(dir),
+  softDrop: () => !inputLocked && session.game.softDrop(),
+  hardDrop: () => { if (!inputLocked) session.game.hardDrop(); },
+  rotate: (dir) => !inputLocked && session.game.rotate(dir),
+  hold: () => !inputLocked && session.game.holdPiece(),
   undo: actions.undo,
   restart: actions.restart,
   pause: () => {},
@@ -283,12 +379,12 @@ for (const button of document.querySelectorAll('[data-action]')) {
     e.preventDefault();
     if (inputLocked) return;
     switch (action) {
-      case 'left': game.move(-1); break;
-      case 'right': game.move(1); break;
-      case 'down': game.softDrop(); break;
-      case 'rotate': game.rotate(1); break;
-      case 'drop': game.hardDrop(); break;
-      case 'hold': game.holdPiece(); break;
+      case 'left': session.game.move(-1); break;
+      case 'right': session.game.move(1); break;
+      case 'down': session.game.softDrop(); break;
+      case 'rotate': session.game.rotate(1); break;
+      case 'drop': session.game.hardDrop(); break;
+      case 'hold': session.game.holdPiece(); break;
     }
   });
 }
@@ -339,7 +435,7 @@ new SettingsPanel({
 /* ---------- loop ---------- */
 
 function frame() {
-  renderer.draw(game);
+  renderer.draw(session.game);
   requestAnimationFrame(frame);
 }
 

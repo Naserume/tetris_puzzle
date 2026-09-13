@@ -14,9 +14,10 @@ export const COLORS = {
   Z: '#f87171',
   J: '#60a5fa',
   L: '#fb923c',
-  // Not a tetromino: pre-set blocks in a puzzle board, which should read as
-  // scenery rather than as a piece someone placed.
-  X: '#5b6884',
+  // Not a tetromino: garbage. Pre-set blocks on a puzzle board are drawn in
+  // neutral grey so they read as terrain rather than as a piece someone
+  // placed — the seven colours stay reserved for pieces in play.
+  X: '#6f7482',
 };
 
 export const GARBAGE = 'X';
