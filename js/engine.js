@@ -89,6 +89,10 @@ export class Game {
     // Gravity off means a piece neither falls nor locks on its own: it waits
     // until the player drops it. Puzzles are about the placement, not speed.
     this.gravity = options.gravity !== false;
+    // With auto-spawn off, locking a piece leaves the board empty-handed until
+    // someone calls spawn(). A lesson uses that gap to hold the position while
+    // it explains the move just played.
+    this.autoSpawn = options.autoSpawn !== false;
     this.listeners = {};
     this.reset();
   }
@@ -373,7 +377,7 @@ export class Game {
     this.emit('lock', { ...placement, cleared, tspin });
     this.holdUsed = false;
     this.current = null;
-    this.spawn();
+    if (this.autoSpawn) this.spawn();
   }
 
   // A complete, detached copy of everything a move can change. Undo is built

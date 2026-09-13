@@ -57,7 +57,7 @@ export const PUZZLES = [
     id: 'puzzle-perfect',
     topic: 'line-clear',
     level: 'intermediate',
-    order: 3,
+    order: 4,
     title: '남김없이',
     brief: 'O 두 개로 보드를 완전히 비우세요. 채점은 마지막에 한 번에 합니다.',
     stages: [{

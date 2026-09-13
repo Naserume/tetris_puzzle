@@ -22,10 +22,26 @@ const $ = (id) => document.getElementById(id);
 // How long a wrong placement stays on the board before it rewinds itself:
 // long enough to see what you did, short enough not to feel like a penalty.
 const REWIND_DELAY_MS = 1000;
-// How long a tick stays up before the next board replaces it.
-const ADVANCE_DELAY_MS = 1100;
 
 const MODE_LABEL = { lesson: '레슨', review: '복습', random: '랜덤 퍼즐', single: '문제' };
+
+// A right answer in a lesson holds the position. What the button says depends
+// on what is waiting on the other side of the pause.
+const NEXT_LABEL = { move: '다음 수 →', stage: '다음 판 →', finish: '완료 →' };
+
+// While play is held, any key that would have moved a piece means "go on" —
+// there is no piece to move, and reaching for the drop key to continue is the
+// natural thing to do. Undo and restart keep doing their own jobs.
+const CONTINUE_ACTIONS = new Set([
+  'left', 'right', 'softDrop', 'hardDrop', 'rotateCW', 'rotateCCW', 'rotate180', 'hold',
+]);
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
 
 const ui = {
   mode: $('puzzle-mode'),
@@ -59,7 +75,6 @@ let session = null;
 let attemptRecorded = false;
 let inputLocked = false;
 let rewindTimer = null;
-let advanceTimer = null;
 let cardTimer = null;
 
 /* ---------- routing ---------- */
@@ -106,7 +121,6 @@ function advanceItem() {
 
 function clearTimers() {
   clearTimeout(rewindTimer);
-  clearTimeout(advanceTimer);
   clearTimeout(cardTimer);
 }
 
@@ -136,11 +150,7 @@ function paintChrome() {
   ui.cat.textContent = categoryName(item.topic, item.level);
   ui.num.textContent = `${indexOfItem(item.id)} / ${ITEMS.length}`;
   ui.brief.textContent = item.brief || '';
-
-  const hint = session.stage.moves[0]?.hint;
-  ui.hint.textContent = hint ? `힌트 — ${hint}` : '';
   ui.hint.hidden = true;
-  $('btn-hint').disabled = !hint;
 
   paintStats();
 }
@@ -152,6 +162,19 @@ function paintStats() {
     ? `${session.matched.size} / ${session.movesInStage} 수`
     : `${session.movesMade} / ${session.movesInStage} 수`;
   ui.undo.disabled = !session.canUndo;
+  paintHint();
+}
+
+// The hint belongs to the move you are about to make, not to the first move of
+// the board. If the player had it open, it stays open and simply changes.
+function paintHint() {
+  const move = session.stage.moves[session.currentMoveIndex()] ?? session.stage.moves[0];
+  const hint = move?.hint;
+  const wasOpen = !ui.hint.hidden;
+
+  ui.hint.textContent = hint ? `힌트 — ${hint}` : '';
+  $('btn-hint').disabled = !hint;
+  ui.hint.hidden = hint ? !wasOpen : true;
 }
 
 /* ---------- verdicts ---------- */
@@ -167,12 +190,12 @@ function wireSession() {
   session.on('verdict', (verdict) => {
     markAttempt();
     renderer.mark(verdict.cells, verdict.ok);
-    showBubble(verdict.note, verdict.cells, verdict.ok);
     paintStats();
 
     if (!verdict.ok) {
       // Hold the wrong placement on screen, then put it back so the player can
       // simply try again — no button to press, no lost position.
+      showBubble(verdict.note, verdict.cells, false);
       inputLocked = true;
       rewindTimer = setTimeout(() => {
         session.undo();
@@ -182,14 +205,13 @@ function wireSession() {
       return;
     }
 
-    if (verdict.stageDone) {
-      inputLocked = true;
-      advanceTimer = setTimeout(() => {
-        session.advance();
-        inputLocked = false;
-        paintStats();
-      }, ADVANCE_DELAY_MS);
-    }
+    // Right answer: the session is holding the position and no next piece has
+    // been dealt. Nothing moves again until the player says so.
+    inputLocked = true;
+    showBubble(verdict.note, verdict.cells, true, {
+      label: NEXT_LABEL[verdict.next] ?? '계속 →',
+      onGo: proceed,
+    });
   });
 
   // Puzzles stay quiet while you play; everything is said at the end.
@@ -224,11 +246,21 @@ function hideBubble() {
 }
 
 // Anchored to the squares that were just played, above them when there is
-// room and below them when there is not.
-function showBubble(note, cells, ok) {
-  if (!note) return hideBubble();
+// room and below them when there is not. The continue control lives inside it
+// so that it sits where the move was, and so a move with nothing to say still
+// gets a button through the same code path.
+function showBubble(note, cells, ok, action = null) {
+  if (!note && !action) return hideBubble();
 
-  ui.bubble.textContent = note;
+  ui.bubble.replaceChildren();
+  if (note) ui.bubble.append(el('p', 'bubble__text', note));
+  if (action) {
+    const go = el('button', 'bubble__go', action.label);
+    go.type = 'button';
+    go.addEventListener('click', action.onGo);
+    ui.bubble.append(go);
+  }
+
   ui.bubble.classList.toggle('is-good', ok);
   ui.bubble.classList.toggle('is-bad', !ok);
   ui.bubble.hidden = false;
@@ -333,6 +365,18 @@ function breakdownRow(entry, index) {
 
 /* ---------- controls ---------- */
 
+// One step out of a pause: the next piece on this board, the next board, or
+// the result. Everything that resumes play goes through here.
+function proceed() {
+  if (!session.paused) return;
+  clearTimeout(cardTimer);
+  hideBubble();
+  renderer.clearMark();
+  session.proceed();
+  inputLocked = false;
+  paintStats();
+}
+
 const actions = {
   undo: () => {
     if (inputLocked) return;
@@ -373,10 +417,22 @@ const input = new Input({
 }, settings);
 input.attach();
 
+// Held-position keyboard: Enter, or any key that would have moved a piece.
+// Capture phase, so it is spent on continuing rather than reaching Input.
+window.addEventListener('keydown', (e) => {
+  if (!session || !session.paused) return;
+  const bound = input.lookup[e.code];
+  if (e.code !== 'Enter' && !(bound && CONTINUE_ACTIONS.has(bound))) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  proceed();
+}, true);
+
 for (const button of document.querySelectorAll('[data-action]')) {
   const action = button.dataset.action;
   button.addEventListener('pointerdown', (e) => {
     e.preventDefault();
+    if (session.paused) return proceed();
     if (inputLocked) return;
     switch (action) {
       case 'left': session.game.move(-1); break;

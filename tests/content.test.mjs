@@ -83,6 +83,35 @@ function play(session, cells) {
   return landing;
 }
 
+// Plays an item straight through with the best answer for every move.
+// A lesson pauses after each right answer and withholds the next piece, so
+// proceed() stands in for the player pressing "다음 수"; a puzzle never pauses
+// and proceed() is a no-op there.
+function playBest(session, item, onMove = () => {}) {
+  for (let s = 0; s < item.stages.length; s++) {
+    const stage = item.stages[s];
+    const order = stage.moves.map((_, i) => i);
+
+    for (let step = 0; step < stage.moves.length; step++) {
+      if (!session.game.current) {
+        throw new Error(`${item.id} stage ${s}: no piece in hand at move ${step}`);
+      }
+      const landings = reachablePlacements(session.game.grid, session.game.current.type);
+      const candidates = stage.ordered === false ? order : [order[0]];
+      const chosen = candidates.find((i) => landings.has(cellKey(bestAnswer(stage.moves[i]).cells)));
+      if (chosen === undefined) {
+        throw new Error(`${item.id} stage ${s} move ${step}: the best answer is not reachable`);
+      }
+
+      onMove({ stage, move: stage.moves[chosen], landings, stageIndex: s, step });
+      order.splice(order.indexOf(chosen), 1);
+      play(session, bestAnswer(stage.moves[chosen]).cells);
+      session.proceed();
+    }
+    if (session.awaitingAdvance) session.advance();
+  }
+}
+
 /* ---------- taxonomy ---------- */
 
 t('every topic sits in a real tier', () => {
@@ -187,70 +216,111 @@ t('no two answers in a move describe the same placement', () => {
 t('every ranked answer is a placement a player can actually reach', () => {
   for (const item of ITEMS) {
     const session = new PuzzleSession(item);
-
-    for (let s = 0; s < item.stages.length; s++) {
-      const stage = item.stages[s];
-      const order = stage.moves.map((_, i) => i);
-
-      for (let step = 0; step < stage.moves.length; step++) {
-        const game = session.game;
-        ok(game.current, `${item.id} stage ${s}: ran out of pieces at move ${step}`);
-        const landings = reachablePlacements(game.grid, game.current.type);
-
-        const candidates = stage.ordered === false ? order : [order[0]];
-        const chosen = candidates.find((i) =>
-          landings.has(cellKey(bestAnswer(stage.moves[i]).cells)));
-        ok(chosen !== undefined,
-          `${item.id} stage ${s} move ${step}: the best answer is not reachable`);
-
-        // Every alternative listed for this move has to be playable too —
-        // scoring a move nobody can make would be a lie on the result screen.
-        for (const answer of stage.moves[chosen].answers) {
-          ok(landings.has(cellKey(answer.cells)),
-            `${item.id} stage ${s}: "${answer.label}" is not reachable`);
-        }
-
-        order.splice(order.indexOf(chosen), 1);
-        play(session, bestAnswer(stage.moves[chosen]).cells);
+    playBest(session, item, ({ move, landings }) => {
+      // Every alternative listed for this move has to be playable too —
+      // scoring a move nobody can make would be a lie on the result screen.
+      for (const answer of move.answers) {
+        ok(landings.has(cellKey(answer.cells)),
+          `${item.id}: "${answer.label}" is not reachable`);
       }
-      if (session.awaitingAdvance) session.advance();
-    }
+    });
   }
 });
 
 /* ---------- lessons ---------- */
 
-function solveLesson(item) {
-  const session = new PuzzleSession(item);
-  const verdicts = [];
-  const stages = [];
-  session.on('verdict', (v) => verdicts.push(v));
-  session.on('stage', (s) => stages.push(s.index));
-  session.on('finished', (f) => { session.last = f; });
-
-  for (let s = 0; s < item.stages.length; s++) {
-    const stage = item.stages[s];
-    const order = stage.moves.map((_, i) => i);
-    for (let step = 0; step < stage.moves.length; step++) {
-      const landings = reachablePlacements(session.game.grid, session.game.current.type);
-      const candidates = stage.ordered === false ? order : [order[0]];
-      const chosen = candidates.find((i) => landings.has(cellKey(bestAnswer(stage.moves[i]).cells)));
-      order.splice(order.indexOf(chosen), 1);
-      play(session, bestAnswer(stage.moves[chosen]).cells);
-    }
-    session.advance();
-  }
-  return { session, verdicts, stages };
-}
-
 t('playing the best answers completes every lesson', () => {
   for (const item of lessonItems()) {
-    const { session, verdicts } = solveLesson(item);
+    const session = new PuzzleSession(item);
+    const verdicts = [];
+    let finished = null;
+    session.on('verdict', (v) => verdicts.push(v));
+    session.on('finished', (f) => { finished = f; });
+
+    playBest(session, item);
+
     ok(verdicts.every((v) => v.ok), `${item.id}: a best answer was judged wrong`);
     eq(verdicts.length, movesOf(item).length, item.id);
     eq(session.status, 'done', item.id);
-    ok(session.last.ok, `${item.id}: finished without success`);
-    eq(session.last.percent, 100, item.id);
+    ok(finished.ok, `${item.id}: finished without success`);
+    eq(finished.percent, 100, item.id);
+  }
+});
+
+t('a right answer in a lesson withholds the next piece', () => {
+  const item = itemById('lesson-b2b');
+  eq(item.stages[0].moves.length, 2, 'this lesson is meant to run two moves on one board');
+
+  const session = new PuzzleSession(item);
+  const board = JSON.stringify(session.game.grid);
+
+  let verdict = null;
+  session.on('verdict', (v) => { verdict = v; });
+  play(session, bestAnswer(item.stages[0].moves[0]).cells);
+
+  eq(verdict.ok, true);
+  eq(verdict.next, 'move', 'another move is waiting on this same board');
+  ok(session.paused, 'play is held');
+  eq(session.game.current, null, 'and no piece has been dealt');
+  ok(JSON.stringify(session.game.grid) !== board, 'the clear already happened');
+
+  ok(session.proceed(), 'proceeding deals the next piece');
+  ok(session.game.current, 'the piece is in hand');
+  eq(session.stageIndex, 0, 'still the same board');
+  eq(session.paused, false);
+});
+
+t('the pause says what is on the other side of it', () => {
+  const tsd = itemById('lesson-tsd');
+  const session = new PuzzleSession(tsd);
+  const nexts = [];
+  session.on('verdict', (v) => { if (v.ok) nexts.push(v.next); });
+
+  playBest(session, tsd);
+  eq(nexts, ['stage', 'finish'], 'first a new board, then the end');
+});
+
+t('a wrong move does not pause', () => {
+  const item = itemById('lesson-single');
+  const session = new PuzzleSession(item);
+
+  const right = cellKey(bestAnswer(item.stages[0].moves[0]).cells);
+  const wrong = [...reachablePlacements(session.game.grid, 'I').values()]
+    .find((l) => cellKey(l.cells) !== right);
+  play(session, wrong.cells);
+
+  eq(session.paused, false, 'a mistake hands control straight back');
+  eq(session.proceed(), false, 'there is nothing to proceed to');
+});
+
+t('undo works while a lesson is paused', () => {
+  const item = itemById('lesson-b2b');
+  const session = new PuzzleSession(item);
+  const board = JSON.stringify(session.game.grid);
+
+  play(session, bestAnswer(item.stages[0].moves[0]).cells);
+  ok(session.paused);
+
+  ok(session.undo(), 'the move can be taken back mid-pause');
+  eq(session.paused, false);
+  eq(JSON.stringify(session.game.grid), board, 'the cleared rows came back');
+  ok(session.game.current, 'and the piece is back in hand');
+  eq(session.matched.size, 0);
+});
+
+t('a puzzle never pauses between moves', () => {
+  for (const item of puzzleItems()) {
+    const session = new PuzzleSession(item);
+    const total = movesOf(item).length;
+    for (let i = 0; i < total; i++) {
+      ok(session.game.current, `${item.id}: piece ${i} should be dealt already`);
+      const stage = session.stage;
+      const order = stage.moves.map((_, n) => n).filter((n) => !session.matched.has(n));
+      const landings = reachablePlacements(session.game.grid, session.game.current.type);
+      const chosen = order.find((n) => landings.has(cellKey(bestAnswer(stage.moves[n]).cells)));
+      play(session, bestAnswer(stage.moves[chosen]).cells);
+      eq(session.paused, false, `${item.id}: a puzzle should not hold play`);
+    }
   }
 });
 
@@ -265,10 +335,11 @@ t('a multi-stage lesson loads its next board when the first is done', () => {
   eq(session.stageIndex, 0);
   play(session, bestAnswer(item.stages[0].moves[0]).cells);
   ok(session.awaitingAdvance, 'the stage should be waiting to move on');
+  ok(session.paused, 'and it is holding for the player');
   eq(session.stageIndex, 0, 'it does not switch boards on its own');
 
-  session.advance();
-  eq(session.stageIndex, 1, 'advance loads the next stage');
+  session.proceed();
+  eq(session.stageIndex, 1, 'proceeding loads the next stage');
   ok(boards[1] !== boards[0], 'the second stage is a different board');
   ok(session.game.current, 'and it comes with its own piece');
 });
@@ -334,6 +405,7 @@ t('an unordered stage accepts its moves in either order', () => {
   session.on('verdict', (v) => verdicts.push(v.ok));
 
   play(session, bestAnswer(item.stages[0].moves[1]).cells);
+  session.proceed();
   play(session, bestAnswer(item.stages[0].moves[0]).cells);
 
   eq(verdicts, [true, true], 'both orders should be accepted');
@@ -344,7 +416,7 @@ t('restarting the whole item goes back to the first stage', () => {
   const item = itemById('lesson-tsd');
   const session = new PuzzleSession(item);
   play(session, bestAnswer(item.stages[0].moves[0]).cells);
-  session.advance();
+  session.proceed();
   eq(session.stageIndex, 1);
 
   session.restartAll();

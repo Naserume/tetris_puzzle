@@ -882,8 +882,29 @@ body {
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
-  pointer-events: none;
 }
+
+.bubble__text {
+  margin: 0;
+}
+
+/* Sits under the explanation, inside the bubble, so the thing you press is
+   next to the thing you just read. */
+.bubble__go {
+  display: block;
+  width: 100%;
+  margin-top: 9px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 650;
+  color: #061018;
+  background: var(--ok);
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.bubble__go:hover { filter: brightness(1.08); }
 
 .bubble.is-good { border-color: rgba(74, 222, 128, 0.55); }
 .bubble.is-bad { border-color: rgba(248, 113, 113, 0.55); }

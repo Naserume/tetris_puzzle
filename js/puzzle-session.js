@@ -9,6 +9,8 @@
 //   lesson — every placement is answered the moment it locks. Only the
 //            best-ranked answer counts as right; anything else is explained
 //            and rewound, so the player is never stuck and never loses.
+//            A right answer pauses: the next piece is withheld until the
+//            player says to go on, so there is time to read why it was right.
 //   puzzle — nothing is said while you play. Each placement is matched
 //            against the ranked answers and scored, and the whole breakdown
 //            arrives at the end.
@@ -29,6 +31,7 @@ export class PuzzleSession {
     this.results = [];        // every scored placement, across all stages
     this.status = 'playing';  // playing | done
     this.awaitingAdvance = false;
+    this.paused = false;      // holding on a right answer, waiting to go on
 
     this.stageIndex = -1;
     this.game = null;
@@ -65,8 +68,11 @@ export class PuzzleSession {
     this.matched = new Set();
     this.movesMade = 0;
     this.awaitingAdvance = false;
+    this.paused = false;
 
-    this.game = new Game(gameOptionsFor(this.stage));
+    // Lessons hand out the next piece only when asked; puzzles run straight
+    // through, because they are not saying anything between moves anyway.
+    this.game = new Game({ ...gameOptionsFor(this.stage), autoSpawn: !this.guided });
     this.game.on('spawn', () => this.recordStart());
     this.game.on('lock', (placement) => this.judge(placement));
     this.game.start();
@@ -77,6 +83,19 @@ export class PuzzleSession {
       stage: this.stage,
       game: this.game,
     });
+  }
+
+  // One step forward from a pause: the next piece on this board, the next
+  // board, or the end. This is what the "다음 수" control calls.
+  proceed() {
+    if (!this.paused) return false;
+    this.paused = false;
+    if (this.awaitingAdvance) {
+      this.advance();
+      return true;
+    }
+    this.game.spawn();
+    return true;
   }
 
   // Called by the page once it has finished showing whatever the last move
@@ -108,6 +127,7 @@ export class PuzzleSession {
 
   undo() {
     if (!this.canUndo) return false;
+    this.paused = false;
     this.movesMade--;
     this.history.length = this.movesMade + 1;
     this.rewindTo(this.history[this.movesMade]);
@@ -118,6 +138,7 @@ export class PuzzleSession {
   // Restarts the current stage only; restartAll() goes back to stage one.
   restartStage() {
     if (this.history.length === 0) return false;
+    this.paused = false;
     this.movesMade = 0;
     this.history.length = 1;
     this.rewindTo(this.history[0]);
@@ -136,6 +157,7 @@ export class PuzzleSession {
     this.placements.length = this.movesMade;
     this.results.length = Math.max(0, this.results.length - 1);
     this.awaitingAdvance = false;
+    this.paused = false;
     this.status = 'playing';
 
     // The matched set is rebuilt from the placements that survive, so an
@@ -213,6 +235,10 @@ export class PuzzleSession {
     const lastStage = this.stageIndex + 1 >= this.stageCount;
     if (stageDone) this.awaitingAdvance = true;
 
+    // Hold here. The next piece is not dealt until proceed() is called, which
+    // is what gives the explanation time to be read.
+    this.paused = true;
+
     this.emit('verdict', {
       ok: true,
       cells: placement.cells,
@@ -220,6 +246,7 @@ export class PuzzleSession {
       label: answer.label ?? null,
       stageDone,
       lastStage,
+      next: !stageDone ? 'move' : (lastStage ? 'finish' : 'stage'),
     });
   }
 

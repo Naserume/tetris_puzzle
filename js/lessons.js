@@ -117,6 +117,53 @@ export const LESSONS = [
   },
 
   {
+    id: 'lesson-three-moves',
+    topic: 'line-clear',
+    level: 'intermediate',
+    order: 3,
+    title: '세 수 이어 두기',
+    brief: '판은 그대로입니다. 한 수를 둘 때마다 확인하고 다음 수로 넘어가세요.',
+    stages: [{
+      board: ['XXXXXX....', 'XXXXXX....', 'XXXXXX....'],
+      queue: ['O', 'O', 'I'],
+      ordered: false,
+      moves: [
+        {
+          answers: [{
+            cells: [[6, 18], [7, 18], [6, 19], [7, 19]],
+            score: 100,
+            label: '첫 번째 상자',
+            note: '바닥까지 내려앉았습니다. 아직 아무 줄도 차지 않았지만, 이 수가 다음 수의 발판입니다.',
+          }],
+          defaultWrong: '구멍은 오른쪽 아래 네 칸 × 세 줄입니다. 바닥부터 차곡차곡 메우세요.',
+          hint: 'O를 오른쪽 구멍 바닥에 붙이세요.',
+        },
+        {
+          answers: [{
+            cells: [[8, 18], [9, 18], [8, 19], [9, 19]],
+            score: 100,
+            label: '두 번째 상자',
+            note: '두 줄이 한 번에 사라졌습니다. 남은 한 줄이 아래로 내려왔습니다 — 이제 마지막 수입니다.',
+          }],
+          defaultWrong: '남은 두 칸 폭에 O가 그대로 들어갑니다.',
+          hint: '첫 상자 옆에 나란히.',
+        },
+        {
+          answers: [{
+            cells: [[6, 19], [7, 19], [8, 19], [9, 19]],
+            score: 100,
+            label: '마무리',
+            note: '마지막 네 칸까지. 보드에 아무것도 남지 않았습니다.',
+          }],
+          defaultWrong: '내려온 줄에 네 칸이 비어 있습니다. I를 눕혀서 그대로 덮으세요.',
+          hint: 'I를 눕혀 오른쪽 끝까지.',
+        },
+      ],
+    }],
+    outro: '한 수로 끝나는 문제는 드뭅니다. 한 수마다 무엇이 달라졌는지 보고 다음 수를 정하는 것이 실전입니다.',
+  },
+
+  {
     id: 'lesson-tetris',
     topic: 'tetris',
     level: 'beginner',
@@ -158,7 +205,7 @@ export const LESSONS = [
             cells: [[9, 16], [9, 17], [9, 18], [9, 19]],
             score: 100,
             label: '테트리스',
-            note: '첫 번째 테트리스. 네 줄이 사라지면서 위에 남은 네 줄이 그대로 내려옵니다.',
+            note: '첫 번째 테트리스. 네 줄이 사라지면서 위에 남은 네 줄이 그대로 내려왔습니다. 같은 자리가 한 번 더 생겼습니다.',
           }],
           defaultWrong: '세워서 오른쪽 우물에 넣으세요.',
           hint: '세로로 세워 오른쪽 끝까지.',

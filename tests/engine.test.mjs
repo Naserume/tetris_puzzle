@@ -172,6 +172,17 @@ t('gravity moves a piece down one cell per interval', () => {
   eq(g.current.y, y0 + 1);
 });
 
+t('with auto-spawn off, locking leaves the board empty-handed', () => {
+  const g = new Game({ autoSpawn: false });
+  g.start();
+  ok(g.current, 'the first piece still arrives on start');
+  const next = g.queue[0];
+  g.hardDrop();
+  eq(g.current, null, 'nothing came out to replace it');
+  g.spawn();
+  eq(g.current.type, next, 'and spawn() hands over the piece that was waiting');
+});
+
 t('a grounded piece locks only after the lock delay', () => {
   const g = new Game(); g.start();
   g.current = { type: 'O', rot: 0, x: 3, y: ROWS - 2 };
